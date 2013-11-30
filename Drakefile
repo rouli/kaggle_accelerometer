@@ -1,0 +1,218 @@
+out/ <-
+  mkdir -p out
+
+submissions/ <-
+  mkdir -p submissions
+
+; make private train and test set
+out/xtrain.csv, out/xtest.csv <- data/train.csv [python]
+  import os, sys; sys.path.append(os.getcwd()+'/code')
+  import infra
+  infra.split_train('$[INPUT0]', '$[OUTPUT0]', '$[OUTPUT1]')
+
+; calculate real test summary
+out/test_summary.pickle <- data/test.csv [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import infra
+  test_summary = infra.summarize_all_samples('$[INPUT0]')
+  pickle.dump(test_summary, open('$[OUTPUT0]', 'w'))
+
+; calculate private test summary
+out/xtest_summary.pickle <- data/xtest.csv [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import infra
+  test_summary = infra.summarize_all_samples('$[INPUT0]')
+  pickle.dump(test_summary, open('$[OUTPUT0]', 'w'))
+
+; calculate true chains 
+out/chains.pickle <- data/questions.csv, out/test_summary.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  questions = infra.load_questions('$[INPUT0]')
+  test_summary = pickle.load(open('$[INPUT1]'))
+  chains = model.get_all_refined_chains(test_summary, questions)
+  pickle.dump(chains, open('$[OUTPUT0]', 'w'))
+
+
+; generate private train model
+out/xmodel.pickle <- out/xtrain.csv [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  xmodel = model.train('$[INPUT0]') 
+  pickle.dump(xmodel, open('$[OUTPUT0]', 'w'))
+
+
+; generate true train model
+out/model.pickle <- data/train.csv [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  xmodel = model.train('$[INPUT0]') 
+  pickle.dump(xmodel, open('$[OUTPUT0]', 'w'))
+
+
+; calculate true groups
+out/groups.pickle <- data/questions.csv, out/chains.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  questions = infra.load_questions('$[INPUT0]')
+  chains = pickle.load(open('$[INPUT1]'))
+  groups = model.group_train_ids(chains, questions)
+  pickle.dump(groups, open('$[OUTPUT0]', 'w'))
+
+; generate private questions
+out/xquestions.csv <- out/xtest.csv, out/groups.pickle [python]
+  import os, sys, pickle, csv; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  groups = pickle.load(open('$[INPUT1]'))
+  xquestions = infra.create_questionaire('$[INPUT0]', groups)
+  w = csv.writer(open('$[OUTPUT0]', 'w'))
+  w.writerow(('QuestionId','SequenceId','QuizDevice'))
+  w.writerows((i, qid, pid) for i, (qid, pid) in enumerate(xquestions.iteritems()))
+
+; generate private chains
+out/xchains.pickle <- out/xquestions.csv, out/xtest_summary.pickle, out/chains.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  from collections import Counter
+  questions = infra.load_questions('$[INPUT0]')
+  test_summary = pickle.load(open('$[INPUT1]'))
+  chains = pickle.load(open('$[INPUT2]'))
+  xchains = model.get_all_refined_chains(test_summary, questions)
+  cntr = Counter(len(c) for c in chains)
+  smoothed_lengths = model.from_counter_to_list(cntr, 8)
+  xchains = model.random_break_chains(xchains, smoothed_lengths)
+  pickle.dump(xchains, open('$[OUTPUT0]', 'w'))
+
+; calculate private relative probabilities 
+out/xgroup_logprobs.pickle <- out/xtrain.csv, out/groups.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  groups = pickle.load(open('$[INPUT1]'))
+  group_logprobs = model.group_logprobs('$[INPUT0]', groups)
+  pickle.dump(group_logprobs, open('$[OUTPUT0]', 'w'))
+
+; calculate true relative probabilities 
+out/group_logprobs.pickle <- data/train.csv, out/groups.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  groups = pickle.load(open('$[INPUT1]'))
+  group_logprobs = model.group_logprobs('$[INPUT0]', groups)
+  pickle.dump(group_logprobs, open('$[OUTPUT0]', 'w'))
+
+; calculate private prob scores
+out/xprob_scores.pickle <- out/xtest.csv, out/xmodel.pickle, out/xgroup_logprobs.pickle, out/xquestions.csv, out/groups.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  tmp, histograms, tmp, tmp, tmp, tmp, tmp, tmp = pickle.load(open('$[INPUT1]'))
+  group_sample_probs = pickle.load(open('$[INPUT2]'))
+  questions = infra.load_questions('$[INPUT3]')
+  groups = pickle.load(open('$[INPUT4]'))
+  prob_scores = model.all_prob_devid_given_deltas('$[INPUT0]', histograms, group_sample_probs, questions, groups)
+  pickle.dump(prob_scores, open('$[OUTPUT0]', 'w'))
+
+; calculate true prob scores
+out/prob_scores.pickle <- data/test.csv, out/model.pickle, out/group_logprobs.pickle, data/questions.csv, out/groups.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  tmp, histograms, tmp, tmp, tmp, tmp, tmp, tmp = pickle.load(open('$[INPUT1]'))
+  group_sample_probs = pickle.load(open('$[INPUT2]'))
+  questions = infra.load_questions('$[INPUT3]')
+  groups = pickle.load(open('$[INPUT4]'))
+  prob_scores = model.all_prob_devid_given_deltas('$[INPUT0]', histograms, group_sample_probs, questions, groups)
+  pickle.dump(prob_scores, open('$[OUTPUT0]', 'w'))
+
+
+; calculate private resolution and min values
+out/xtest_resolutions.pickle, out/xtest_min_value.pickle <- out/xtest.csv [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  test_resolutions = infra.summarize_all_samples('$[INPUT0]', lambda s: max(max((infra.resolution(x), infra.resolution(y), infra.resolution(z))) for t,x,y,z,d in s))
+  test_min_value = infra.summarize_all_samples('$[INPUT0]', lambda s: min(infra.min_abs_value(w) for w in s))
+  pickle.dump(test_resolutions, open('$[OUTPUT0]', 'w'))
+  pickle.dump(test_min_value, open('$[OUTPUT1]', 'w'))
+
+
+; calculate true resolution and min values
+out/test_resolutions.pickle, out/test_min_value.pickle <- data/test.csv [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  test_resolutions = infra.summarize_all_samples('$[INPUT0]', lambda s: max(max((infra.resolution(x), infra.resolution(y), infra.resolution(z))) for t,x,y,z,d in s))
+  test_min_value = infra.summarize_all_samples('$[INPUT0]', lambda s: min(infra.min_abs_value(w) for w in s))
+  pickle.dump(test_resolutions, open('$[OUTPUT0]', 'w'))
+  pickle.dump(test_min_value, open('$[OUTPUT1]', 'w'))
+
+; calculate valid answers for private test
+out/xvalids.pickle <- out/groups.pickle, out/xmodel.pickle, out/xtest_summary.pickle, out/xquestions.csv, out/xchains.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  groups = pickle.load(open('$[INPUT0]'))
+  train_last_timestamps, tmp, tmp, tmp, tmp, tmp, tmp, tmp = pickle.load(open('$[INPUT1]'))
+  test_summary = pickle.load(open('$[INPUT2]'))
+  questions = infra.load_questions('$[INPUT3]')
+  chains = pickle.load(open('$[INPUT4]'))
+  valids = model.get_valids(groups, train_last_timestamps, test_summary, questions, chains)
+  pickle.dump(valids, open('$[OUTPUT0]', 'w'))
+
+; calculate valid answers for private test
+out/valids.pickle <- out/groups.pickle, out/model.pickle, out/test_summary.pickle, data/questions.csv, out/chains.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra
+  groups = pickle.load(open('$[INPUT0]'))
+  train_last_timestamps, tmp, tmp, tmp, tmp, tmp, tmp, tmp = pickle.load(open('$[INPUT1]'))
+  test_summary = pickle.load(open('$[INPUT2]'))
+  questions = infra.load_questions('$[INPUT3]')
+  chains = pickle.load(open('$[INPUT4]'))
+  valids = model.get_valids(groups, train_last_timestamps, test_summary, questions, chains)
+  pickle.dump(valids, open('$[OUTPUT0]', 'w'))
+
+; calculate features for private test
+out/xfeatures.pickle, out/xlabels.pickle <- out/xtest.csv, out/xquestions.csv, out/xmodel.pickle, out/xvalids.pickle, out/xchains.pickle, out/xprob_scores.pickle, out/xtest_summary.pickle, out/xtest_resolutions.pickle, out/xtest_min_value.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra  
+  from itertools import izip
+  questions = infra.load_questions('$[INPUT1]')
+  trainmodel = pickle.load(open('$[INPUT2]'))
+  valids = pickle.load(open('$[INPUT3]'))
+  chains = pickle.load(open('$[INPUT4]'))
+  prob_scores = pickle.load(open('$[INPUT5]'))
+  test_summary = pickle.load(open('$[INPUT6]'))
+  test_resolutions = pickle.load(open('$[INPUT7]'))
+  test_min_value = pickle.load(open('$[INPUT8]'))
+  qids, validity, features = model.get_features('$[INPUT0]', questions, trainmodel, valids, chains, prob_scores, test_summary, test_resolutions, test_min_value)
+  labels = model.get_labels('$[INPUT0]', questions)
+  features = [f for v,f in izip(validity, features) if v==1]
+  labels = [l for v,l in izip(validity, labels) if v==1]
+  pickle.dump(features, open('$[OUTPUT0]', 'w'))
+  pickle.dump(labels, open('$[OUTPUT1]', 'w'))
+
+; train classifiers
+out/forest.pickle, out/logist.pickle <- out/xfeatures.pickle, out/xlabels.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import infra, model
+  from sklearn.linear_model import LogisticRegression
+  from sklearn.ensemble import RandomForestClassifier
+  features = pickle.load(open('$[INPUT0]'))
+  labels = pickle.load(open('$[INPUT1]'))
+  forest = RandomForestClassifier(n_estimators=100, random_state=1701)
+  forest.fit(features, labels)
+  logist = LogisticRegression()
+  logist.fit(features, labels)
+  pickle.dump(forest, open('$[OUTPUT0]', 'w'))
+  pickle.dump(logist, open('$[OUTPUT1]', 'w'))  
+
+; calculate answers
+submissions/sub.csv <- data/test.csv, data/questions.csv, out/model.pickle, out/valids.pickle, out/chains.pickle, out/prob_scores.pickle, out/test_summary.pickle, out/test_resolutions.pickle, out/test_min_value.pickle, out/forest.pickle, out/logist.pickle [python]
+  import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
+  import model, infra  
+  questions = infra.load_questions('$[INPUT1]')
+  trainmodel = pickle.load(open('$[INPUT2]'))
+  valids = pickle.load(open('$[INPUT3]'))
+  chains = pickle.load(open('$[INPUT4]'))
+  prob_scores = pickle.load(open('$[INPUT5]'))
+  test_summary = pickle.load(open('$[INPUT6]'))
+  test_resolutions = pickle.load(open('$[INPUT7]'))
+  test_min_value = pickle.load(open('$[INPUT8]'))
+  forest =  pickle.load(open('$[INPUT9]'))
+  logist =  pickle.load(open('$[INPUT10]'))
+  answers = model.predict([forest, logist], '$[INPUT0]', questions, trainmodel, valids, chains, prob_scores, test_summary, test_resolutions, test_min_value)
+  infra.write_answers('$[INPUT1]', '$[OUTPUT0]', answers)
