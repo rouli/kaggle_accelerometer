@@ -8,7 +8,6 @@ from itertools import chain as ichain
 from itertools import combinations
 from itertools import izip
 import time
-import fastkde
 import numpy as np
 import random
 

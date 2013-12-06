@@ -18,7 +18,7 @@ out/test_summary.pickle <- data/test.csv [python]
   pickle.dump(test_summary, open('$[OUTPUT0]', 'w'))
 
 ; calculate private test summary
-out/xtest_summary.pickle <- data/xtest.csv [python]
+out/xtest_summary.pickle <- out/xtest.csv [python]
   import os, sys, pickle; sys.path.append(os.getcwd()+'/code')
   import infra
   test_summary = infra.summarize_all_samples('$[INPUT0]')
